@@ -1,15 +1,19 @@
 
-import openshift
+# import openshift
 import sys
 from time import sleep
 
 print('Python version: {}'.format(sys.version))
-print('OpenShift client version: {}'.format(openshift.get_client_version()))
-print('OpenShift server version: {}'.format(openshift.get_server_version()))
+print('Dumping /etc/os-release...')
+with open('/etc/os-release') as f:
+    print(f.readall())
 
-while True:
-    nodes = openshift.selector('nodes').objects()
-    print(nodes)
+# print('OpenShift client version: {}'.format(openshift.get_client_version()))
+# print('OpenShift server version: {}'.format(openshift.get_server_version()))
 
-    print('Sleeping 30 seconds')
-    sleep(30)
+# while True:
+#     nodes = openshift.selector('nodes').objects()
+#     print(nodes)
+
+#     print('Sleeping 30 seconds')
+#     sleep(30)
