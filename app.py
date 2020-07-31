@@ -6,7 +6,7 @@ from time import sleep
 print('Python version: {}'.format(sys.version))
 print('Dumping /etc/os-release...')
 with open('/etc/os-release') as f:
-    print(f.readall())
+    print(f.read())
 
 # print('OpenShift client version: {}'.format(openshift.get_client_version()))
 # print('OpenShift server version: {}'.format(openshift.get_server_version()))
