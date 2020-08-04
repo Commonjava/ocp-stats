@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 
 import os
-from ruamel.yaml import YAML
-from kubernetes import client
-from openshift.dynamic import DynamicClient
 import socket
 from time import time, sleep
 from datetime import datetime as dt
 from math import floor
 from sys import stdout
+from ruamel.yaml import YAML
+from kubernetes import client
+from openshift.dynamic import DynamicClient
 
 SVC_ACCT_DIR = os.environ.get('SVC_ACCT_DIR') or '/var/run/secrets/kubernetes.io/serviceaccount'
 API_URL = os.environ.get('API_URL') or 'https://openshift.default.svc.cluster.local:443'
