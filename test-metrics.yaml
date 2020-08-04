@@ -1,0 +1,12 @@
+---
+metrics:
+  - metric: ocp.311.indy.main.capacity
+    cpu: 24
+    memory: 24Gi
+#  - metric: ocp.311.indy.cassandra.capacity
+#    cpu: 4
+#    memory: 8Gi
+#    pods: 5
+#  - metric: ocp.311.pnc.builder.capacity
+#    cpu: 4
+#    memory: 24Gi

@@ -1,1 +1,4 @@
-openshift-client
+kubernetes~=11.0.0
+openshift~=0.11.2
+ruamel.yaml
+numpy
