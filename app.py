@@ -10,15 +10,17 @@ from ruamel.yaml import YAML
 from kubernetes import client
 from openshift.dynamic import DynamicClient
 
-SVC_ACCT_DIR = os.environ.get('SVC_ACCT_DIR') or '/var/run/secrets/kubernetes.io/serviceaccount'
-API_URL = os.environ.get('API_URL') or 'https://openshift.default.svc.cluster.local:443'
-TOKEN_PATH = os.path.join(SVC_ACCT_DIR, 'token')
-CARBON_HOST = os.environ.get('CARBON_HOST')
-CARBON_PORT = os.environ.get('CARBON_PORT') or 2003
-METRIC_MAP_PATH = os.environ.get('METRIC_MAP') or '/var/run/ocp-stats/metric-map.yaml'
-SLEEP_MINUTES = int(os.environ.get('SLEEP_MINUTES') or 10)
+SVC_ACCT_DIR = (
+    os.environ.get("SVC_ACCT_DIR") or "/var/run/secrets/kubernetes.io/serviceaccount"
+)
+API_URL = os.environ.get("API_URL") or "https://openshift.default.svc.cluster.local:443"
+TOKEN_PATH = os.path.join(SVC_ACCT_DIR, "token")
+CARBON_HOST = os.environ.get("CARBON_HOST")
+CARBON_PORT = os.environ.get("CARBON_PORT") or 2003
+METRIC_MAP_PATH = os.environ.get("METRIC_MAP") or "/var/run/ocp-stats/metric-map.yaml"
+SLEEP_MINUTES = int(os.environ.get("SLEEP_MINUTES") or 10)
 
-yaml = YAML(typ='safe')
+yaml = YAML(typ="safe")
 yaml.indent(mapping=2, sequence=2, offset=2)
 yaml.default_flow_style = False
 
@@ -39,7 +41,7 @@ def compile_metrics(node_map):
     with open(METRIC_MAP_PATH) as f:
         metric_map = yaml.load(f)
 
-    metric_criteria = metric_map.get('metrics') or []
+    metric_criteria = metric_map.get("metrics") or []
 
     metric_values = dict()
     for metric in metric_criteria:
@@ -47,38 +49,42 @@ def compile_metrics(node_map):
         metric_capacity = 0
         for node in node_map.values():
             # print(f"Examining available capacity in node: {node['name']}")
-            pods = node['available']['pods']
-            cpu = node['available']['cpu']
-            mem = node['available']['memory']
+            pods = node["available"]["pods"]
+            cpu = node["available"]["cpu"]
+            mem = node["available"]["memory"]
 
             node_capacity = 0
 
-            m_cpu = parse_cpu(metric.get('cpu'))
+            m_cpu = parse_cpu(metric.get("cpu"))
             # print(f"Comparing required CPU: {m_cpu} to node available CPU: {cpu}")
             if m_cpu is not None and cpu > m_cpu:
                 m_count = floor(cpu / m_cpu)
                 # print(f"Node has {m_count} capacity in terms of CPU")
-                node_capacity = m_count if node_capacity < 1 else min(m_count, node_capacity)
+                node_capacity = (
+                    m_count if node_capacity < 1 else min(m_count, node_capacity)
+                )
 
-            m_mem = parse_mem(metric.get('memory'))
+            m_mem = parse_mem(metric.get("memory"))
             # print(f"Comparing required Memory: {m_mem} to node available Memory: {mem}")
             if m_mem is not None and mem > m_mem:
                 m_count = floor(mem / m_mem)
                 # print(f"Node has {m_count} capacity in terms of Memory")
-                node_capacity = m_count if node_capacity < 1 else min(m_count, node_capacity)
+                node_capacity = (
+                    m_count if node_capacity < 1 else min(m_count, node_capacity)
+                )
 
             node_capacity = 1 if node_capacity < 1 else min(node_capacity, pods)
             # print(f"Node has capacity: {node_capacity}")
 
             metric_capacity += node_capacity
 
-        m_pods = metric.get('pods')
+        m_pods = metric.get("pods")
         # print(f"Comparing required pods: {m_pods} to total available pods: {metric_capacity}")
         if m_pods is not None and metric_capacity > m_pods:
             metric_capacity = floor(metric_capacity / m_pods)
 
         # print(f"{metric['metric']} = {metric_capacity}")
-        metric_values[metric['metric']] = metric_capacity
+        metric_values[metric["metric"]] = metric_capacity
 
     return metric_values
 
@@ -101,7 +107,7 @@ def send_metrics(metrics):
             for (metric, value) in metrics.items():
                 line = f"{metric} {value} {now}\n"
                 print("Sending:\n%s" % line)
-                sock.send(bytes(line, 'utf-8'))
+                sock.send(bytes(line, "utf-8"))
     except socket.error:
         raise SystemExit("Couldn't connect to %s:%d" % conn_info)
 
@@ -121,7 +127,7 @@ def parse_cpu(raw_cpu):
         return raw_cpu
 
     cpu = str(raw_cpu)
-    if cpu.endswith('m'):
+    if cpu.endswith("m"):
         return int(cpu[:-1]) / 1000
 
     return int(cpu)
@@ -142,22 +148,22 @@ def parse_mem(raw_mem):
         return raw_mem
 
     mem = str(raw_mem)
-    if '\'' in mem:
+    if "'" in mem:
         mem = mem[1:-1]
 
-    if mem.endswith('Gi'):
-        return int(mem[:-2]) * 1024*1024*1024
-    elif mem.endswith('G'):
-        return int(mem[:-1]) * 1024*1024*1024
-    elif mem.endswith('Mi'):
-        return int(mem[:-2]) * 1024*1024
-    elif mem.endswith('M'):
-        return int(mem[:-1]) * 1024*1024
-    elif mem.endswith('Ki'):
+    if mem.endswith("Gi"):
+        return int(mem[:-2]) * 1024 * 1024 * 1024
+    elif mem.endswith("G"):
+        return int(mem[:-1]) * 1024 * 1024 * 1024
+    elif mem.endswith("Mi"):
+        return int(mem[:-2]) * 1024 * 1024
+    elif mem.endswith("M"):
+        return int(mem[:-1]) * 1024 * 1024
+    elif mem.endswith("Ki"):
         return int(mem[:-2]) * 1024
-    elif mem.endswith('K'):
+    elif mem.endswith("K"):
         return int(mem[:-1]) * 1024
-    elif mem.endswith('m'):
+    elif mem.endswith("m"):
         # TODO: I'm not sure if this notation is legal, or what Openshift does with it.
         return int(mem[:-1])
 
@@ -175,12 +181,12 @@ def init_node(node_name):
     """
 
     return {
-        'name': node_name,
-        'pods': [],
-        'cpuRequests': [],
-        'cpuLimits': [],
-        'memoryRequests': [],
-        'memoryLimits': []
+        "name": node_name,
+        "pods": [],
+        "cpuRequests": [],
+        "cpuLimits": [],
+        "memoryRequests": [],
+        "memoryLimits": [],
     }
 
 
@@ -195,20 +201,28 @@ def process_pod(pod, node_info):
     """
     # print(f"Processing pod: {pod.metadata.name}")
 
-    node_info['pods'].append(pod.metadata.name)
+    node_info["pods"].append(pod.metadata.name)
 
     for container in pod.spec.containers:
-        if container.get('resources'):
-            if container.resources.get('limits'):
-                if container.resources.limits.get('cpu'):
-                    node_info['cpuLimits'].append(parse_cpu(container.resources.limits.cpu))
-                if container.resources.limits.get('memory'):
-                    node_info['memoryLimits'].append(parse_mem(container.resources.limits.memory))
-            if container.resources.get('requests'):
-                if container.resources.requests.get('cpu'):
-                    node_info['cpuRequests'].append(parse_cpu(container.resources.requests.cpu))
-                if container.resources.requests.get('memory'):
-                    node_info['memoryRequests'].append(parse_mem(container.resources.requests.memory))
+        if container.get("resources"):
+            if container.resources.get("limits"):
+                if container.resources.limits.get("cpu"):
+                    node_info["cpuLimits"].append(
+                        parse_cpu(container.resources.limits.cpu)
+                    )
+                if container.resources.limits.get("memory"):
+                    node_info["memoryLimits"].append(
+                        parse_mem(container.resources.limits.memory)
+                    )
+            if container.resources.get("requests"):
+                if container.resources.requests.get("cpu"):
+                    node_info["cpuRequests"].append(
+                        parse_cpu(container.resources.requests.cpu)
+                    )
+                if container.resources.requests.get("memory"):
+                    node_info["memoryRequests"].append(
+                        parse_mem(container.resources.requests.memory)
+                    )
 
 
 def setup_oc():
@@ -225,11 +239,11 @@ def setup_oc():
     ocp_config.host = API_URL
     ocp_config.verify_ssl = True
 
-    ocp_config.ssl_ca_cert = os.path.join(SVC_ACCT_DIR, 'ca.crt')
+    ocp_config.ssl_ca_cert = os.path.join(SVC_ACCT_DIR, "ca.crt")
     ocp_config.assert_hostname = False
 
     with open(TOKEN_PATH) as f:
-        ocp_config.api_key = {'authorization': f"Bearer {f.read()}"}
+        ocp_config.api_key = {"authorization": f"Bearer {f.read()}"}
 
     k8s = client.ApiClient(ocp_config)
     return DynamicClient(k8s)
@@ -247,15 +261,15 @@ def compile_node_stats():
     """
 
     oc = setup_oc()
-    oc_pods = oc.resources.get(api_version='v1', kind='Pod')
-    oc_nodes = oc.resources.get(api_version='v1', kind='Node')
+    oc_pods = oc.resources.get(api_version="v1", kind="Pod")
+    oc_nodes = oc.resources.get(api_version="v1", kind="Node")
 
     node_map = dict()
 
     # print("Processing nodes...")
     nodes = oc_nodes.get()
     for node in nodes.items:
-        if 'cpt' in node.metadata.name:
+        if "cpt" in node.metadata.name:
             print(f"Processing node: {node.metadata.name}")
 
             nodeInfo = node_map.get(node.metadata.name)
@@ -263,25 +277,27 @@ def compile_node_stats():
                 nodeInfo = init_node(node.metadata.name)
                 node_map[node.metadata.name] = nodeInfo
 
-            if node.status.get('capacity'):
-                if node.status.capacity.get('cpu'):
-                    nodeInfo['cpuCapacity'] = parse_cpu(node.status.capacity.cpu)
+            if node.status.get("capacity"):
+                if node.status.capacity.get("cpu"):
+                    nodeInfo["cpuCapacity"] = parse_cpu(node.status.capacity.cpu)
 
-                if node.status.capacity.get('memory'):
-                    nodeInfo['memoryCapacity'] = parse_mem(node.status.capacity.memory)
+                if node.status.capacity.get("memory"):
+                    nodeInfo["memoryCapacity"] = parse_mem(node.status.capacity.memory)
 
-                if node.status.capacity.get('pods'):
-                    nodeInfo['podCapacity'] = int(node.status.capacity.pods)
+                if node.status.capacity.get("pods"):
+                    nodeInfo["podCapacity"] = int(node.status.capacity.pods)
 
-            if node.status.get('allocatable'):
-                if node.status.allocatable.get('cpu'):
-                    nodeInfo['cpuAllocatable'] = parse_cpu(node.status.allocatable.cpu)
+            if node.status.get("allocatable"):
+                if node.status.allocatable.get("cpu"):
+                    nodeInfo["cpuAllocatable"] = parse_cpu(node.status.allocatable.cpu)
 
-                if node.status.allocatable.get('memory'):
-                    nodeInfo['memoryAllocatable'] = parse_mem(node.status.allocatable.memory)
+                if node.status.allocatable.get("memory"):
+                    nodeInfo["memoryAllocatable"] = parse_mem(
+                        node.status.allocatable.memory
+                    )
 
-                if node.status.allocatable.get('pods'):
-                    nodeInfo['podAllocatable'] = int(node.status.allocatable.pods)
+                if node.status.allocatable.get("pods"):
+                    nodeInfo["podAllocatable"] = int(node.status.allocatable.pods)
 
             # From oc client:
             # https://openshift.api.url:443/api/v1/pods?fieldSelector=spec.nodeName=<node-name>,status.phase!=Failed,status.phase!=Succeeded
@@ -305,27 +321,33 @@ def enrich_node_map(node_map):
     :return: None (condensed information is stored in the node_map parameter)
     """
     for nodeInfo in node_map.values():
-        nodeInfo['allCpuRequests'] = sum(nodeInfo['cpuRequests'])
-        nodeInfo['allMemoryRequests'] = sum(nodeInfo['memoryRequests'])
-        nodeInfo['allCpuLimits'] = sum(nodeInfo['cpuLimits'])
-        nodeInfo['allMemoryLimits'] = sum(nodeInfo['memoryLimits'])
+        nodeInfo["allCpuRequests"] = sum(nodeInfo["cpuRequests"])
+        nodeInfo["allMemoryRequests"] = sum(nodeInfo["memoryRequests"])
+        nodeInfo["allCpuLimits"] = sum(nodeInfo["cpuLimits"])
+        nodeInfo["allMemoryLimits"] = sum(nodeInfo["memoryLimits"])
 
         available = {
-            'cpu': nodeInfo['cpuAllocatable'] - nodeInfo['allCpuRequests'],
-            'memory': nodeInfo['memoryAllocatable'] - nodeInfo['allMemoryRequests'],
-            'pods': nodeInfo['podAllocatable'] - len(nodeInfo['pods'])
+            "cpu": nodeInfo["cpuAllocatable"] - nodeInfo["allCpuRequests"],
+            "memory": nodeInfo["memoryAllocatable"] - nodeInfo["allMemoryRequests"],
+            "pods": nodeInfo["podAllocatable"] - len(nodeInfo["pods"]),
         }
-        nodeInfo['available'] = available
-        
+        nodeInfo["available"] = available
+
         commitments = dict()
-        nodeInfo['commitments'] = commitments
+        nodeInfo["commitments"] = commitments
 
-        commitments['cpuLimit'] = nodeInfo['allCpuLimits'] / nodeInfo['cpuAllocatable']
-        commitments['MemoryLimit'] = nodeInfo['allMemoryLimits'] / nodeInfo['memoryAllocatable']
-        commitments['cpuRequest'] = nodeInfo['allCpuRequests'] / nodeInfo['cpuAllocatable']
-        commitments['MemoryRequest'] = nodeInfo['allMemoryRequests'] / nodeInfo['memoryAllocatable']
+        commitments["cpuLimit"] = nodeInfo["allCpuLimits"] / nodeInfo["cpuAllocatable"]
+        commitments["MemoryLimit"] = (
+            nodeInfo["allMemoryLimits"] / nodeInfo["memoryAllocatable"]
+        )
+        commitments["cpuRequest"] = (
+            nodeInfo["allCpuRequests"] / nodeInfo["cpuAllocatable"]
+        )
+        commitments["MemoryRequest"] = (
+            nodeInfo["allMemoryRequests"] / nodeInfo["memoryAllocatable"]
+        )
 
-        commitments['pod'] = len(nodeInfo['pods']) / nodeInfo['podAllocatable']
+        commitments["pod"] = len(nodeInfo["pods"]) / nodeInfo["podAllocatable"]
 
 
 def run():
@@ -356,6 +378,5 @@ def run():
         sleep(60 * SLEEP_MINUTES)
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     run()
