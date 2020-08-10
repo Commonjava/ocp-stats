@@ -18,7 +18,7 @@ API_URL = os.environ.get("API_URL") or "https://openshift.default.svc.cluster.lo
 TOKEN_PATH = os.path.join(SVC_ACCT_DIR, "token")
 CARBON_HOST = os.environ.get("CARBON_HOST")
 CARBON_PORT = os.environ.get("CARBON_PORT") or 2003
-METRIC_MAP_PATH = os.environ.get("METRIC_MAP") or "/var/run/ocp-stats/metric-map.yaml"
+METRIC_MAP_PATH = os.environ.get("METRIC_MAP") or "/var/run/ocp-stats/metrics.yaml"
 SLEEP_MINUTES = int(os.environ.get("SLEEP_MINUTES") or 10)
 
 yaml = YAML(typ="safe")
