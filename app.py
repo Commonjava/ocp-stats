@@ -9,6 +9,7 @@ from sys import stdout
 from ruamel.yaml import YAML
 from kubernetes import client
 from openshift.dynamic import DynamicClient
+from openshift.dynamic.exceptions import NotFoundError
 
 SVC_ACCT_DIR = (
     os.environ.get("SVC_ACCT_DIR") or "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -25,68 +26,184 @@ yaml.indent(mapping=2, sequence=2, offset=2)
 yaml.default_flow_style = False
 
 
-def compile_metrics(node_map):
+def calculate_capacity_for(m_name, m_pods, m_cpu, m_mem, node_map):
     """
-    Compile the current capacities of various metric profiles against the available capacity we've found in the
-    nodes.
+    Compile the number of nodes where the specified cpu and memory could be hosted, then match this count against the
+    number of pods required, to arrive at a cluster capacity for deploying the specified footprint.
 
-    :param node_map: The mapping of per-node available capacity (among other things)
-    :return: The mapping of metric-name to metric-value (where value is the number of a particular metric profile that
-             we could deploy into the cluster)
+    :param m_name: The name of this metric
+    :param m_pods: The number of pods in this footprint
+    :param m_cpu: The cpu per pod
+    :param m_mem: The memory per pod
+    :param node_map: The map of node statistics / capacities that have been calculated previously
+    :return: None
     """
+    # print(
+    #     f"Checking capacity of metric: {m_name}\n"
+    #     f"    CPU: {m_cpu}\n"
+    #     f"    memory: {m_mem}\n"
+    #     f"    pods: {m_pods}"
+    # )
 
-    if not os.path.exists(METRIC_MAP_PATH):
-        raise Exception(f"Cannot read metric-map YAML from {METRIC_MAP_PATH}")
+    metric_capacity = 0
+    for node in node_map.values():
+        # print(f"Examining available capacity in node: {node['name']}")
+        pods = node["available"]["pods"]
+        cpu = node["available"]["cpu"]
+        mem = node["available"]["memory"]
 
-    with open(METRIC_MAP_PATH) as f:
-        metric_map = yaml.load(f)
+        if pods < 1:
+            continue
 
-    metric_criteria = metric_map.get("metrics") or []
+        node_capacity = 0
 
-    metric_values = dict()
-    for metric in metric_criteria:
+        # print(f"Comparing required CPU: {m_cpu} to node available CPU: {cpu}")
+        if m_cpu is not None and m_cpu > 0:
+            if m_cpu >= cpu:
+                continue
+
+            m_count = floor(cpu / m_cpu)
+            # print(
+            #     f"Node has {m_count} capacity in terms of CPU (req: {m_cpu}, avail: {cpu})"
+            # )
+            node_capacity = (
+                m_count if node_capacity < 1 else min(m_count, node_capacity)
+            )
+
+        # print(f"Comparing required Memory: {m_mem} to node available Memory: {mem}")
+        if m_mem is not None and m_mem > 0:
+            if m_mem >= mem:
+                continue
+
+            m_count = floor(mem / m_mem)
+            # print(
+            #     f"Node has {m_count} capacity in terms of Memory (req: {m_mem}, avail: {mem})"
+            # )
+            node_capacity = (
+                m_count if node_capacity < 1 else min(m_count, node_capacity)
+            )
+
+        node_capacity = 1 if node_capacity < 1 else min(node_capacity, pods)
+        # print(f"Node: {node['name']} has CPU/memory capacity: {node_capacity}")
+
+        metric_capacity += node_capacity
+        # print(
+        #     f"After adding capacity {node_capacity} on node: {node['name']}, " \
+        #     f"capacity of {m_name} is {metric_capacity}\n"
+        # )
+
+    # print(f"Comparing required pods: {m_pods} to total available pods: {metric_capacity}")
+    if m_pods is not None and metric_capacity > m_pods:
+        metric_capacity = floor(metric_capacity / m_pods)
+
+    # print(
+    #     f"After factoring out pod-count / cluster capacity {m_pods}, capacity of {m_name} is {metric_capacity}\n\n"
+    # )
+
+    return metric_capacity
+
+
+def compile_existing_metrics(metric_config, node_map, oc, metric_values):
+    """
+    Compile metrics for each existing DeploymentConfig listed in the metrics YAML. This function will retrieve each
+    DeploymentConfig, and compile the cluster capacity for increasing scale in one of two ways: marginal-pod, or
+    cluster-replacement. Marginal-pod approach (include-replica-count=False) will calculate how much the `oc scale`
+    command can be used to increase the scale of the deployment. The Cluster-replacement approach
+    (include-replica-count=True) calculates how much capacity the cluster has for deploying a complete copy of the
+    DeploymentConfig (either in another project, or possibly as a total redeployment for image change or something).
+
+    :param metric_config: The dict read from the metric YAML file, which MAY contain the `existing` section.
+    :param node_map: The map of node capacities that was compiled in compile_node_stats() and enrich_node_map().
+    :param oc: The base dynamic openshift client, used to create a client for retrieving DeploymentConfig objects
+    :param metric_values: The map of metrics that have been compiled so far, possibly from processing other sections of
+    the metrics YAML file
+    :return: None
+    """
+    oc_dc = oc.resources.get(api_version="v1", kind="DeploymentConfig")
+
+    existing = metric_config.get("existing") or []
+    for metric in existing:
+        m_name = metric.get("name")
+        m_ns = metric.get("namespace")
+        m_dc = metric.get("deployment")
+
+        if m_name is None or m_ns is None or m_dc is None:
+            print(f"Invalid existing metric specification: {metric}. Skipping")
+            continue
+
+        print(f"Pulling DeploymentConfig for {m_ns}/{m_dc}...")
+        try:
+            dc = oc_dc.get(name=m_dc, namespace=m_ns)
+        except NotFoundError as e:
+            dc = None
+
+        if dc is None:
+            print(f"No matching DeploymentConfig: {m_ns}/{m_dc}")
+            continue
+
+        containers = dc.spec.template.spec.containers
+        dc_cpu = 0
+        dc_mem = 0
+        # print(f"Calculating resource request for {len(containers)} containers")
+        for container in containers:
+            if container.resources.get("requests"):
+                if container.resources.requests.get("cpu"):
+                    dc_cpu += parse_cpu(container.resources.requests.cpu)
+                if container.resources.requests.get("memory"):
+                    dc_mem += parse_mem(container.resources.requests.memory)
+
         # print(f"Looking for capacity of metric: {metric['metric']}")
-        metric_capacity = 0
-        for node in node_map.values():
-            # print(f"Examining available capacity in node: {node['name']}")
-            pods = node["available"]["pods"]
-            cpu = node["available"]["cpu"]
-            mem = node["available"]["memory"]
+        if metric.get("include-replica-count") is True:
+            dc_replicas = dc.spec.get("replicas") or 1
+            dc_replicas = int(dc_replicas)
 
-            node_capacity = 0
-
-            m_cpu = parse_cpu(metric.get("cpu"))
-            # print(f"Comparing required CPU: {m_cpu} to node available CPU: {cpu}")
-            if m_cpu is not None and cpu > m_cpu:
-                m_count = floor(cpu / m_cpu)
-                # print(f"Node has {m_count} capacity in terms of CPU")
-                node_capacity = (
-                    m_count if node_capacity < 1 else min(m_count, node_capacity)
-                )
-
-            m_mem = parse_mem(metric.get("memory"))
-            # print(f"Comparing required Memory: {m_mem} to node available Memory: {mem}")
-            if m_mem is not None and mem > m_mem:
-                m_count = floor(mem / m_mem)
-                # print(f"Node has {m_count} capacity in terms of Memory")
-                node_capacity = (
-                    m_count if node_capacity < 1 else min(m_count, node_capacity)
-                )
-
-            node_capacity = 1 if node_capacity < 1 else min(node_capacity, pods)
-            # print(f"Node has capacity: {node_capacity}")
-
-            metric_capacity += node_capacity
-
-        m_pods = metric.get("pods")
-        # print(f"Comparing required pods: {m_pods} to total available pods: {metric_capacity}")
-        if m_pods is not None and metric_capacity > m_pods:
-            metric_capacity = floor(metric_capacity / m_pods)
+            # print(
+            #     f"Including replica-count: {dc_replicas} for full-cluster replacement capacity"
+            # )
+            metric_capacity = calculate_capacity_for(
+                dc_replicas, dc_cpu, dc_mem, node_map
+            )
+        else:
+            # print("Calculating capacity for scaling up deployment by 1 pod")
+            metric_capacity = calculate_capacity_for(
+                m_name, 1, dc_cpu, dc_mem, node_map
+            )
 
         # print(f"{metric['metric']} = {metric_capacity}")
-        metric_values[metric["metric"]] = metric_capacity
+        metric_values[m_name] = metric_capacity
 
-    return metric_values
+
+def compile_hypo_metrics(metric_config, node_map, metric_values):
+    """
+    Compile the current capacities of various hypothetical metric profiles against the available capacity we've found in
+    the nodes.
+
+    :param metric_config: The dict read from the metric YAML file, which MAY contain the `hypothetical` section.
+    :param node_map: The map of node capacities that was compiled in compile_node_stats() and enrich_node_map().
+    :param metric_values: The map of metrics that have been compiled so far, possibly from processing other sections of
+    the metrics YAML file
+    :return: None
+    """
+
+    hypotheticals = metric_config.get("hypothetical") or []
+
+    for metric in hypotheticals:
+        m_name = metric.get("name")
+        m_pods = metric.get("pods")
+        m_cpu = parse_cpu(metric.get("cpu"))
+        m_mem = parse_mem(metric.get("memory"))
+
+        if m_name is None:
+            continue
+
+        if m_cpu is None and m_mem is None and m_pods is None:
+            continue
+
+        # print(f"Looking for capacity of metric: {metric['metric']}")
+        metric_capacity = calculate_capacity_for(m_name, m_pods, m_cpu, m_mem, node_map)
+
+        # print(f"{metric['metric']} = {metric_capacity}")
+        metric_values[metric["name"]] = metric_capacity
 
 
 def send_metrics(metrics):
@@ -100,6 +217,11 @@ def send_metrics(metrics):
 
     conn_info = (CARBON_HOST, CARBON_PORT)
     now = int(time())
+    # print("Connecting to: %s:%d" % conn_info)
+    # for (metric, value) in metrics.items():
+    #     line = f"{metric} {value} {now}\n"
+    #     print(line)
+
     try:
         with socket.socket() as sock:
             print("Connecting to: %s:%d" % conn_info)
@@ -249,7 +371,7 @@ def setup_oc():
     return DynamicClient(k8s)
 
 
-def compile_node_stats():
+def compile_node_stats(oc):
     """
     Retrieve and iterate through the nodes in an Openshift cluster, only processing nodes with a name prefix of 'cpt'.
     For each node, compile resource capacity stats into a master dict keyed by node name. Then, retrieve and iterate
@@ -260,14 +382,18 @@ def compile_node_stats():
     or capacities
     """
 
-    oc = setup_oc()
     oc_pods = oc.resources.get(api_version="v1", kind="Pod")
     oc_nodes = oc.resources.get(api_version="v1", kind="Node")
 
     node_map = dict()
 
     # print("Processing nodes...")
-    nodes = oc_nodes.get()
+    try:
+        nodes = oc_nodes.get()
+    except NotFoundError as e:
+        print(f"Node list failed. Aborting.")
+        return node_map
+
     for node in nodes.items:
         if "cpt" in node.metadata.name:
             print(f"Processing node: {node.metadata.name}")
@@ -302,9 +428,12 @@ def compile_node_stats():
             # From oc client:
             # https://openshift.api.url:443/api/v1/pods?fieldSelector=spec.nodeName=<node-name>,status.phase!=Failed,status.phase!=Succeeded
             field_selector = f"spec.nodeName={node.metadata.name},status.phase!=Failed,status.phase!=Succeeded"
-            node_pods = oc_pods.get(field_selector=field_selector)
-            for pod in node_pods.items:
-                process_pod(pod, nodeInfo)
+            try:
+                node_pods = oc_pods.get(field_selector=field_selector)
+                for pod in node_pods.items:
+                    process_pod(pod, nodeInfo)
+            except NotFoundError as e:
+                print(f"Cannot find running pods matching node: {node.metadata.name}")
 
     return node_map
 
@@ -325,6 +454,18 @@ def enrich_node_map(node_map):
         nodeInfo["allMemoryRequests"] = sum(nodeInfo["memoryRequests"])
         nodeInfo["allCpuLimits"] = sum(nodeInfo["cpuLimits"])
         nodeInfo["allMemoryLimits"] = sum(nodeInfo["memoryLimits"])
+        # print(
+        #     f"[{nodeInfo['name']}] node capacity summary:"
+        #     f"\nCalculated  {nodeInfo['allCpuRequests']} "
+        #     + f"from {len(nodeInfo['cpuRequests'])} pod CPU requests"
+        #     + f"\n          {nodeInfo['allMemoryRequests']} "
+        #     + f"from {len(nodeInfo['memoryRequests'])} pod memory requests"
+        #     + f"from {len(nodeInfo['memoryRequests'])} pod memory requests"
+        #     + f"\nCalculated from {len(nodeInfo['pods'])} total pods"
+        #     + f"\nNode has: {nodeInfo['cpuAllocatable']} CPU to allocate"
+        #     + f"\n          {nodeInfo['memoryAllocatable']} memory to allocate"
+        #     + f"\n          {nodeInfo['podAllocatable']} pods to allocate"
+        # )
 
         available = {
             "cpu": nodeInfo["cpuAllocatable"] - nodeInfo["allCpuRequests"],
@@ -350,6 +491,20 @@ def enrich_node_map(node_map):
         commitments["pod"] = len(nodeInfo["pods"]) / nodeInfo["podAllocatable"]
 
 
+def read_metric_config():
+    """
+    Simply read the metric configuration from a YAML file.
+    :return: The metric configuration dict
+    """
+    if not os.path.exists(METRIC_MAP_PATH):
+        raise Exception(f"Cannot read metric configuration YAML from {METRIC_MAP_PATH}")
+
+    with open(METRIC_MAP_PATH) as f:
+        metric_config = yaml.load(f)
+
+    return metric_config
+
+
 def run():
     """
     Main control loop. Every N minutes, recalculate and publish cluster capacity metrics.
@@ -358,13 +513,17 @@ def run():
 
     while True:
         print(f"Calculating cluster capacities at {dt.now()}")
-        node_map = compile_node_stats()
+        oc = setup_oc()
+        node_map = compile_node_stats(oc)
 
         print("Condensing accumulated node stats")
         enrich_node_map(node_map)
 
         print("Calculating metric values")
-        metric_values = compile_metrics(node_map)
+        metric_config = read_metric_config()
+        metric_values = dict()
+        compile_hypo_metrics(metric_config, node_map, metric_values)
+        compile_existing_metrics(metric_config, node_map, oc, metric_values)
 
         yaml.dump(metric_values, stdout)
 

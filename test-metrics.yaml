@@ -1,11 +1,18 @@
 ---
-metrics:
-  - metric: ocp.311.indy.main.capacity
+hypothetical:
+  - name: ocp.hyp.indy.main.capacity
     cpu: 24
     memory: 24Gi
-  - metric: ocp.311.indy.cassandra.node.capacity
+  - name: ocp.hyp.indy.cassandra.node.capacity
     cpu: 4
     memory: 8Gi
-  - metric: ocp.311.pnc.builder.capacity
+  - name: ocp.hyp.pnc.builder.capacity
     cpu: 4
     memory: 24Gi
+existing:
+  - name: ocp.existing.prod.indy.capacity
+    namespace: prod
+    deployment: indy
+  - name: ocp.existing.test.indy.capacity
+    namespace: test
+    deployment: indy-test
